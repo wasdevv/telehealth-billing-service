@@ -1,0 +1,114 @@
+# This service on its own. telehealth-clinical-api calls it at http://billing:8000 when
+# both are on the same network — see the README for running the pair together.
+name: telehealth-billing
+
+x-app: &app
+  build:
+    context: .
+  environment: &app-env
+    DJANGO_SETTINGS_MODULE: config.settings.production
+    DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?generate one with manage.py shell -c "from django.core.management.utils import get_random_secret_key as k; print(k())"}
+    DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-*}
+    DJANGO_DEBUG: "false"
+    # No TLS terminator in this stack, and telehealth-clinical-api calls us over plain
+    # HTTP on the internal network. With the redirect on, every one of those POSTs comes
+    # back 301 and no invoice is ever created. Put a terminating proxy in front and set
+    # this to "true".
+    DJANGO_SECURE_SSL_REDIRECT: ${DJANGO_SECURE_SSL_REDIRECT:-false}
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    POSTGRES_DB: telehealth_billing
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    REDIS_URL: redis://redis:6379/0
+    INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?must match the value in telehealth-clinical-api}
+    STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:?required in production settings}
+    STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:?required in production settings}
+    TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+    TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+    TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-}
+    MAILGUN_API_KEY: ${MAILGUN_API_KEY:-}
+    MAILGUN_DOMAIN: ${MAILGUN_DOMAIN:-}
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  billing:
+    <<: *app
+    # Migrations belong to exactly one process. The worker and beat wait for this
+    # container's healthcheck instead, so nothing races to migrate the same database.
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 60"
+    ports:
+      - "${BILLING_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/v1/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  worker:
+    <<: *app
+    command: ["celery", "-A", "telehealth_billing", "worker", "--loglevel=info", "--concurrency=4"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      billing:
+        condition: service_healthy
+    healthcheck:
+      # The slim image has no procps, so this reads PID 1's command line out of procfs
+      # rather than shelling out to pgrep, which is not installed.
+      test: ["CMD-SHELL", "tr '\\0' ' ' < /proc/1/cmdline | grep -q celery"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  beat:
+    <<: *app
+    command:
+      ["celery", "-A", "telehealth_billing", "beat", "--loglevel=info",
+       "--scheduler", "django_celery_beat.schedulers:DatabaseScheduler"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      billing:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: telehealth_billing
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d telehealth_billing"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:
+  redis-data:

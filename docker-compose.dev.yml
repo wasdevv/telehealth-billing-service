@@ -1,0 +1,39 @@
+# Just the datastores, for running the service locally with `manage.py runserver`.
+# The whole thing in containers is docker-compose.standalone.yml.
+#
+# Host ports default high because 5432 and 6379 are usually already taken — including by
+# the sibling telehealth-clinical-api, which uses 55432/56379.
+name: telehealth-billing-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: telehealth_billing
+    ports:
+      - "${POSTGRES_PORT:-55433}:5432"
+    volumes:
+      - postgres-dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-56380}:6379"
+    volumes:
+      - redis-dev:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-dev:
+  redis-dev:

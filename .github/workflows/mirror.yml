@@ -1,0 +1,34 @@
+name: Mirror to GitLab
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    # Skipped, not failed, until a destination is configured: an unconfigured optional job
+    # should not paint the repository's checks red on every push.
+    if: vars.GITLAB_REPOSITORY != ''
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # --mirror pushes every ref, so every ref has to be present locally first.
+          fetch-depth: 0
+
+      - name: Push --mirror to GitLab
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          # Host and path only, e.g. gitlab.com/your-namespace/telehealth-billing-service.git
+          GITLAB_REPOSITORY: ${{ vars.GITLAB_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GITLAB_TOKEN}" ]; then
+            echo "GITLAB_REPOSITORY is set but the GITLAB_TOKEN secret is missing." >&2
+            exit 1
+          fi
+          # The token is only ever interpolated into the remote URL and never echoed;
+          # `set -x` is deliberately absent for the same reason.
+          git remote add gitlab "https://oauth2:${GITLAB_TOKEN}@${GITLAB_REPOSITORY}"
+          git push --mirror gitlab

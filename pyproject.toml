@@ -1,0 +1,84 @@
+[project]
+name = "telehealth-billing-service"
+version = "0.1.0"
+description = "Payment and notification service with idempotent Stripe webhook processing."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+
+dependencies = [
+    "django>=5.1,<6.0",
+    "djangorestframework>=3.15",
+    "drf-spectacular>=0.28",
+    "django-rest-knox>=5.0",
+    "celery[redis]>=5.4",
+    "django-celery-beat>=2.7",
+    "redis>=5.2",
+    "stripe>=11.0",
+    "twilio>=9.3",
+    "pyotp>=2.9",
+    "qrcode[pil]>=8.0",
+    "psycopg[binary]>=3.2",
+    "gunicorn>=23.0",
+    "requests>=2.32",
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-django>=4.9",
+    "pytest-cov>=6.0",
+    "factory-boy>=3.3",
+    "ruff>=0.8",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.test"
+python_files = ["test_*.py", "tests.py"]
+addopts = [
+    "--strict-markers",
+    "--cov=accounts",
+    "--cov=billing",
+    "--cov=notifications",
+    "--cov=config",
+    "--cov-report=term-missing",
+    # The gate is the point. A suite that reports coverage without failing on it is a
+    # number nobody reads.
+    "--cov-fail-under=85",
+]
+
+[tool.coverage.run]
+omit = ["*/migrations/*", "*/tests/*", "config/wsgi.py", "config/asgi.py", "manage.py"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 110
+exclude = ["**/migrations/*", ".venv"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",   # pycodestyle + pyflakes
+    "I",             # import sorting
+    "UP",            # pyupgrade
+    "B",             # bugbear
+    "DJ",            # flake8-django
+    "S",             # bandit: this service handles money and secrets
+    "C4", "SIM", "RUF",
+]
+ignore = [
+    "S101",   # pytest is built on assert
+    "RUF012", # Django class attributes are not ClassVar by convention
+]
+
+[tool.ruff.lint.isort]
+# Without this, ruff files the local apps under third-party and fights every import block.
+known-first-party = ["accounts", "billing", "notifications", "config", "telehealth_billing"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/*" = ["S105", "S106"]  # hardcoded test credentials are the point of a fixture
+"conftest.py" = ["S105", "S106"]
+"config/tests_production_settings.py" = ["S105", "S106"]
+"config/settings/*" = ["F403", "F405"]  # settings modules intentionally star-import the base
